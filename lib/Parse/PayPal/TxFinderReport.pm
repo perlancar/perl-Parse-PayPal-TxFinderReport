@@ -96,6 +96,7 @@ sub parse_paypal_txfinder_report {
     }
 
     my $res = [200, "OK", {
+        format => "txfinder",
         transactions => [],
     }];
 
