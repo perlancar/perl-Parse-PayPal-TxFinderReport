@@ -6,7 +6,6 @@ package Parse::PayPal::TxFinderReport;
 use 5.010001;
 use strict;
 use warnings;
-use Log::Any qw($log);
 
 use Exporter qw(import);
 our @EXPORT_OK = qw(parse_paypal_txfinder_report);
