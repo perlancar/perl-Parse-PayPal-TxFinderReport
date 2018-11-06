@@ -272,6 +272,8 @@ Date will be converted to Unix epoch in the returned data structure.
 
 Some characteristics of this variant:
 
+=over
+
 =item * Dates are locale-formatted (e.g. DD/MM/YYYY)
 
 Date will be converted to Unix epoch in the returned data structure. Make sure
