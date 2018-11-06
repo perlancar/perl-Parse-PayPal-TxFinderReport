@@ -15,10 +15,29 @@ use DateTime; # XXX use a more lightweight alternative
 our %SPEC;
 
 sub _parse_date {
-    my $mdy = shift;
-    $mdy =~ m!^(\d\d?)/(\d\d?)/(\d\d\d\d)$!
-        or die "Invalid date format in '$mdy', must be MM-DD-YYYY";
-    DateTime->new(year => $3, month => $1, day => $2)->epoch;
+    my ($fmt, $date) = @_;
+    if ($fmt eq 'MM/DD/YYYY') {
+        $date =~ m!^(\d\d?)/(\d\d?)/(\d\d\d\d)$!
+            or die "Invalid date format in '$date', must be MM/DD/YYYY";
+        return DateTime->new(year => $3, month => $1, day => $2)->epoch;
+    } elsif ($fmt eq 'DD/MM/YYYY') {
+        $date =~ m!^(\d\d?)/(\d\d?)/(\d\d\d\d)$!
+            or die "Invalid date format in '$date', must be DD/MM/YYYY";
+        return DateTime->new(year => $3, month => $2, day => $1)->epoch;
+    } else {
+        die "Unknown date format, please use MM/DD/YYYY or DD/MM/YYYY";
+    }
+}
+
+sub _parse_num {
+    my ($thousands_sep, $decimal_point, $num) = @_;
+    if ($thousands_sep) {
+        $num =~ s/\Q$thousands_sep//g;
+    }
+    if ($decimal_point && $decimal_point ne '.') {
+        $num =~ s/\Q$decimal_point/./;
+    }
+    $num;
 }
 
 $SPEC{parse_paypal_txfinder_report} = {
@@ -60,6 +79,18 @@ CSV, or /txt|tsv|tab/i for tab-separated).
 
 _
         },
+        date_format => {
+            schema => ['str*', in=>['MM/DD/YYYY', 'DD/MM/YYYY']],
+            default => 'MM/DD/YYYY',
+        },
+        thousands_sep => {
+            schema => ['str*', in=>['.', '', ',']],
+            default => ',',
+        },
+        decimal_point => {
+            schema => ['str*', in=>['.', ',']],
+            default => '.',
+        },
     },
     args_rels => {
         req_one => ['file', 'string'],
@@ -69,6 +100,9 @@ sub parse_paypal_txfinder_report {
     my %args = @_;
 
     my $format = $args{format};
+    my $date_format   = $args{date_format}   // 'MM/DD/YYYY';
+    my $thousands_sep = $args{thousands_sep} // ',';
+    my $decimal_point = $args{decimal_point} // '.';
 
     my $handle;
     my $file;
@@ -100,34 +134,59 @@ sub parse_paypal_txfinder_report {
     }];
 
     my $column_names;
+    my $variant; # STR="Search Transaction Results", TF="Transaction Finder"
+    my $state;   # header, data, postamble
     my $code_parse_row = sub {
         my ($row, $rownum) = @_;
         if ($rownum == 1) {
-            return [400, "Doesn't find signature in first row"]
-                unless @$row && $row->[0] eq 'Search Transactions Results';
-        } elsif ($rownum == 2) {
+            return [412, "There are no rows"] unless @$row;
+            if ($row->[0] eq 'Search Transactions Results') {
+                $variant = 'STR';
+            } elsif ($row->[0] eq 'Transaction Finder') {
+                $variant = 'TF';
+            } else {
+                return [400, "Doesn't find signature in first row"];
+            }
+            $state = 'header';
+            return;
+        }
+        if ($state eq 'postamble') {
+            return $res;
+        }
+        if (!@$row || @$row == 1 && $row->[0] eq '') {
+            if ($state eq 'header') {
+                $state = 'data';
+            } elsif ($state eq 'data') {
+                $state = 'postamble';
+            }
+            return;
+        }
+        if ($state eq 'header') {
+            # set column names as the last row in header
             $column_names = $row;
-        } elsif ($rownum >= 4) {
-            # skip empty & total row
-            return unless @$row;
+            return;
+        }
+        if ($state eq 'data') {
             return if $row->[0] eq 'Total';
-
             my $hash = {};
             for (0..@$row) {
                 my $key = $column_names->[$_] // "";
                 last unless length $key;
                 my $v;
                 if ($key =~ /^Date$/) {
-                    $v = _parse_date($row->[$_]);
+                    $v = _parse_date($date_format, $row->[$_]);
+                } elsif ($key =~ /Amount|Fee/) {
+                    $v = _parse_num($thousands_sep, $decimal_point, $row->[$_]);
                 } else {
                     $v = $row->[$_];
                 }
                 $hash->{$key} = $v;
             }
             push @{ $res->[2]{transactions} }, $hash;
+            return;
         }
-        0;
-    };
+        return;
+    }; # code_parse_row
 
     if ($format eq 'csv') {
         require Text::CSV;
@@ -190,17 +249,38 @@ Sample result when parse is successful:
 
 PayPal provides various kinds reports which you can retrieve from their website
 under Reports menu. This module provides routine to parse PayPal transaction
-finder report into a Perl data structure (from the website under Reports >
-Transactions > Transaction finder). The CSV format is supported. No official
-documentation of the format is available, but it's mostly regular CSV.
+finder report into a Perl data structure. The CSV format is supported. No
+official documentation of the format is available, but it's mostly regular CSV.
 
-Some characteristics of this report:
+This module can recognize two variants of the report:
+
+=head2 Search Transaction Results (STR)
+
+Some characteristics of this variant:
 
 =over
 
 =item * Date is MM/DD/YYYY only without hour/minute/second information
 
+Date will be converted to Unix epoch in the returned data structure.
+
 =item * No transaction status field
+
+=back
+
+=head2 Transaction Finder (TF)
+
+Some characteristics of this variant:
+
+=item * Dates are locale-formatted (e.g. DD/MM/YYYY)
+
+Date will be converted to Unix epoch in the returned data structure. Make sure
+you set the correct C<date_format> parameter.
+
+=item * Numbers are locale-formatted (e.g. 1,23 instead of 1.23 when using comma as decimal character)
+
+Formatting will be removed. Make sure you set the correct C<thousands_sep> and
+C<decimal_point> parameters.
 
 =back
 
