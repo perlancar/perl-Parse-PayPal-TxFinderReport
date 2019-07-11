@@ -1,15 +1,15 @@
-0.003   2018-11-06 (PERLANCAR)
+0.003   2018-11-06  Released-By: PERLANCAR
 
 	- Support 'Transaction Finder' variant.
 
 
-0.002   2017-07-03 (PERLANCAR)
+0.002   2017-07-03  Released-By: PERLANCAR
 
 	- No functional changes.
 
 	- Remove usage of Log::Any.
 
 
-0.001   2016-12-30 (PERLANCAR)
+0.001   2016-12-30  Released-By: PERLANCAR
 
         - First version.
